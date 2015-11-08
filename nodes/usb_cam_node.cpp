@@ -58,16 +58,18 @@ public:
       white_balance_, gain_;
   bool autofocus_, autoexposure_, auto_white_balance_;
   boost::shared_ptr<camera_info_manager::CameraInfoManager> cinfo_;
+  
+  // stereo image checking
+  int x1_, x2_, y1_, y2_;
+  image_transport::CameraPublisher image_pubR_;
+  sensor_msgs::Image imgR_;
+  bool stereo_;
 
   UsbCam cam_;
 
   UsbCamNode() :
       node_("~")
   {
-    // advertise the main image topic
-    image_transport::ImageTransport it(node_);
-    image_pub_ = it.advertiseCamera("image_raw", 1);
-
     // grab the parameters
     node_.param("video_device", video_device_name_, std::string("/dev/video0"));
     node_.param("brightness", brightness_, -1); //0-255, -1 "leave alone"
@@ -91,7 +93,13 @@ public:
     // enable/disable auto white balance temperature
     node_.param("auto_white_balance", auto_white_balance_, true);
     node_.param("white_balance", white_balance_, 4000);
-
+    // discover the partition for a stereo image report
+    node_.param("saturation", x1_, -1); //-1 "none"
+    node_.param("saturation", x2_, -1); //-1 "none"
+    node_.param("saturation", y1_, -1); //-1 "none"
+    node_.param("saturation", y2_, -1); //-1 "none"
+    stereo_ = (x1_!=-1 && x2_!=-1 && y1_!=-1 && y2_!=-1);
+      
     // load the camera info
     node_.param("camera_frame_id", img_.header.frame_id, std::string("head_camera"));
     node_.param("camera_name", camera_name_, std::string("head_camera"));
@@ -130,6 +138,20 @@ public:
       return;
     }
 
+    // get parameters for image partition
+    if (stereo_) {
+        // advertise both image topics
+        image_transport::ImageTransport itL(node_), itR(node_);
+        image_pub_ = itL.advertiseCamera("left/image_raw", 1);
+        image_pubR_ = itR.advertiseCamera("right/image_raw", 1);
+        cam_.set_partition(x1_, y1_, x2_, y2_);
+    }
+    else {
+        // advertise the main image topic
+        image_transport::ImageTransport it(node_);
+        image_pub_ = it.advertiseCamera("image_raw", 1);
+    }
+      
     // start the camera
     cam_.start(video_device_name_.c_str(), io_method, pixel_format, image_width_,
 		     image_height_, framerate_);
@@ -203,17 +225,32 @@ public:
 
   bool take_and_send_image()
   {
-    // grab the image
-    cam_.grab_image(&img_);
+    if (!stereo_) {
+        // grab the image
+        cam_.grab_image(&img_);
 
-    // grab the camera info
-    sensor_msgs::CameraInfoPtr ci(new sensor_msgs::CameraInfo(cinfo_->getCameraInfo()));
-    ci->header.frame_id = img_.header.frame_id;
-    ci->header.stamp = img_.header.stamp;
+        // grab the camera info
+        sensor_msgs::CameraInfoPtr ci(new sensor_msgs::CameraInfo(cinfo_->getCameraInfo()));
+        ci->header.frame_id = img_.header.frame_id;
+        ci->header.stamp = img_.header.stamp;
 
-    // publish the image
-    image_pub_.publish(img_, *ci);
-
+        // publish the image
+        image_pub_.publish(img_, *ci);
+    }
+    else {
+        // grab the image
+        cam_.grab_image_stereo(&img_, &imgR_);
+        
+        // grab the camera info
+        sensor_msgs::CameraInfoPtr ci(new sensor_msgs::CameraInfo(cinfo_->getCameraInfo()));
+        ci->header.frame_id = img_.header.frame_id;
+        ci->header.stamp = img_.header.stamp;
+        
+        // publish the image
+        image_pub_.publish(img_, *ci);
+        // publish the image; for now copy calibration info for right channel
+        image_pubR_.publish(imgR_, *ci);
+    }
     return true;
   }
 

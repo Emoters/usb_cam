@@ -82,6 +82,9 @@ class UsbCam {
 
   // grabs a new image from the camera
   void grab_image(sensor_msgs::Image* image);
+    
+  // grab a stereo image from camera
+  void grab_image_stereo(sensor_msgs::Image* msgL, sensor_msgs::Image* msgR);
 
   // enables/disable auto focus
   void set_auto_focus(int value);
@@ -89,6 +92,9 @@ class UsbCam {
   // Set video device parameters
   void set_v4l_parameter(const std::string& param, int value);
   void set_v4l_parameter(const std::string& param, const std::string& value);
+    
+  // set image partition information
+  void set_partition(int x1, int y1, int x2, int y2);
 
   static io_method io_method_from_string(const std::string& str);
   static pixel_format pixel_format_from_string(const std::string& str);
@@ -125,7 +131,8 @@ class UsbCam {
   void close_device(void);
   void open_device(void);
   void grab_image();
-
+  void init_partitions(void);
+  void partition_image(const int& x1, const int& y1, camera_image_t *dest);
 
   std::string camera_dev_;
   unsigned int pixelformat_;
@@ -143,6 +150,10 @@ class UsbCam {
   int avframe_rgb_size_;
   struct SwsContext *video_sws_;
   camera_image_t *image_;
+
+  camera_image_t *imageL_;
+  camera_image_t *imageR_;
+  int x1_,x2_,y1_,y2_,xS_,yS_;  //coordinates for image partition
 
 };
 

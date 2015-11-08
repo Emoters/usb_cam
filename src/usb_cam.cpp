@@ -356,7 +356,9 @@ void rgb242rgb(char *YUV, char *RGB, int NumPixels)
 UsbCam::UsbCam()
   : io_(IO_METHOD_MMAP), fd_(-1), buffers_(NULL), n_buffers_(0), avframe_camera_(NULL),
     avframe_rgb_(NULL), avcodec_(NULL), avoptions_(NULL), avcodec_context_(NULL),
-    avframe_camera_size_(0), avframe_rgb_size_(0), video_sws_(NULL), image_(NULL) {
+    avframe_camera_size_(0), avframe_rgb_size_(0), video_sws_(NULL), image_(NULL),
+    imageL_(NULL), imageR_(NULL), x1_(-1), x2_(-1), y1_(-1), y2_(-1), xS_(-1), yS_(-1)
+{
 }
 UsbCam::~UsbCam()
 {
@@ -1031,6 +1033,8 @@ void UsbCam::start(const std::string& dev, io_method io_method,
   image_->is_new = 0;
   image_->image = (char *)calloc(image_->image_size, sizeof(char));
   memset(image_->image, 0, image_->image_size * sizeof(char));
+    
+  init_partitions();
 }
 
 void UsbCam::shutdown(void)
@@ -1054,6 +1058,13 @@ void UsbCam::shutdown(void)
   if(image_)
     free(image_);
   image_ = NULL;
+    
+  if(imageL_)
+    free(imageL_);
+  imageL_ = NULL;
+  if(imageR_)
+    free(imageR_);
+  imageR_ = NULL;
 }
 
 void UsbCam::grab_image(sensor_msgs::Image* msg)
@@ -1073,6 +1084,26 @@ void UsbCam::grab_image(sensor_msgs::Image* msg)
     fillImage(*msg, "rgb8", image_->height, image_->width, 3 * image_->width,
         image_->image);
   }
+}
+    
+void UsbCam::grab_image_stereo(sensor_msgs::Image* msgL, sensor_msgs::Image* msgR)
+{
+    if (!imageL_ || !imageR_) return;
+    
+    grab_image();                               // grab the image
+    partition_image(0, 0, imageL_);             // copy parts of source into left
+    partition_image(xS_, yS_, imageR_);         // copy parts of source into right
+    
+    msgL->header.stamp = ros::Time::now();       // stamp the image
+    msgR->header.stamp = ros::Time::now();       // stamp the image
+    if (monochrome_) {                          // fill the info
+        fillImage(*msgL, "mono8", imageL_->height, imageL_->width, imageL_->width, imageL_->image);
+        fillImage(*msgR, "mono8", imageR_->height, imageR_->width, imageR_->width, imageR_->image);
+    }
+    else {
+        fillImage(*msgL, "rgb8", imageL_->height, imageL_->width, 3 * imageL_->width, imageL_->image);
+        fillImage(*msgR, "rgb8", imageR_->height, imageR_->width, 3 * imageR_->width, imageR_->image);
+    }
 }
 
 void UsbCam::grab_image()
@@ -1217,6 +1248,54 @@ UsbCam::pixel_format UsbCam::pixel_format_from_string(const std::string& str)
       return PIXEL_FORMAT_RGB24;
     else
       return PIXEL_FORMAT_UNKNOWN;
+}
+
+//configure a partition line that cuts the image into two parts
+void UsbCam::set_partition(int x1, int y1, int x2, int y2)
+{
+    x1_ = x1; y1_ = y1;
+    x2_ = x2; y2_ = y2;
+}
+
+void UsbCam::init_partitions(void)
+{
+    //no partition configuration? abort
+    if (x1_==-1 || y1_==-1 || x2_==-1 || y2_==-1) return;
+    
+    imageL_->height = std::max(y1_, y2_);    //find the partition sizes
+    imageL_->width = std::max(x2_, x1_);
+    yS_ = std::min(y1_, y2_);
+    xS_ = std::min(x2_, x1_);
+    imageR_->height = std::max(y1_, y2_);
+    imageR_->width = std::max(x2_, x1_);
+    if (!imageL_) {                 //allocate "left" image
+        imageL_ = (camera_image_t *)calloc(1, sizeof(camera_image_t));
+        imageL_->bytes_per_pixel = image_->bytes_per_pixel;
+        imageL_->image_size = imageL_->width * imageL_->height * imageL_->bytes_per_pixel;
+        imageL_->is_new = 0;
+        imageL_->image = (char *)calloc(imageL_->image_size, sizeof(char));
+        memset(imageL_->image, 0, imageL_->image_size * sizeof(char));
+    }
+    if (!imageR_) {                 //allocate "right" image
+        imageR_ = (camera_image_t *)calloc(1, sizeof(camera_image_t));
+        imageR_->bytes_per_pixel = image_->bytes_per_pixel;
+        imageR_->image_size = imageR_->width * imageR_->height * imageR_->bytes_per_pixel;
+        imageR_->is_new = 0;
+        imageR_->image = (char *)calloc(imageR_->image_size, sizeof(char));
+        memset(imageR_->image, 0, imageR_->image_size * sizeof(char));
+    }
+}
+                      
+void UsbCam::partition_image(const int& x1, const int& y1, camera_image_t *dest)
+{
+    int iLenSrc = image_->width*image_->bytes_per_pixel;            //advance on src buffer
+    int iLenDest = dest->width*dest->bytes_per_pixel;               //memcpy length to dest
+    const char *pSrc=image_->bytes_per_pixel*(y1*image_->width + x1)+image_->image;      //ptr of src
+    char *pDest=dest->image;                                        //ptr of dest
+    for (int iY=y1; iY<dest->height; iY++, pSrc+= iLenSrc, pDest+= iLenDest) {
+        memcpy(pDest, pSrc, iLenDest);
+    }
+    dest->is_new = 1;
 }
 
 }
