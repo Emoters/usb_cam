@@ -1262,28 +1262,36 @@ void UsbCam::init_partitions(void)
     //no partition configuration? abort
     if (x1_==-1 || y1_==-1 || x2_==-1 || y2_==-1) return;
     
-    imageL_->height = std::max(y1_, y2_);    //find the partition sizes
-    imageL_->width = std::max(x2_, x1_);
     yS_ = std::min(y1_, y2_);
     xS_ = std::min(x2_, x1_);
+
+    if (imageL_) {                 //allocate "left" image
+        free(imageL_);
+        imageL_ = NULL;
+    }
+    imageL_ = (camera_image_t *)calloc(1, sizeof(camera_image_t));
+    imageL_->height = std::max(y1_, y2_);    //find the partition sizes
+    imageL_->width = std::max(x2_, x1_);
+    imageL_->bytes_per_pixel = image_->bytes_per_pixel;
+    imageL_->image_size = imageL_->width * imageL_->height * imageL_->bytes_per_pixel;
+    imageL_->is_new = 0;
+    imageL_->image = (char *)calloc(imageL_->image_size, sizeof(char));
+    memset(imageL_->image, 0, imageL_->image_size * sizeof(char));
+
+    if (imageR_) {                 //allocate "right" image
+        free(imageR_);
+        imageR_ = NULL;
+    }
+    imageR_ = (camera_image_t *)calloc(1, sizeof(camera_image_t));
     imageR_->height = std::max(y1_, y2_);
     imageR_->width = std::max(x2_, x1_);
-    if (!imageL_) {                 //allocate "left" image
-        imageL_ = (camera_image_t *)calloc(1, sizeof(camera_image_t));
-        imageL_->bytes_per_pixel = image_->bytes_per_pixel;
-        imageL_->image_size = imageL_->width * imageL_->height * imageL_->bytes_per_pixel;
-        imageL_->is_new = 0;
-        imageL_->image = (char *)calloc(imageL_->image_size, sizeof(char));
-        memset(imageL_->image, 0, imageL_->image_size * sizeof(char));
-    }
-    if (!imageR_) {                 //allocate "right" image
-        imageR_ = (camera_image_t *)calloc(1, sizeof(camera_image_t));
-        imageR_->bytes_per_pixel = image_->bytes_per_pixel;
-        imageR_->image_size = imageR_->width * imageR_->height * imageR_->bytes_per_pixel;
-        imageR_->is_new = 0;
-        imageR_->image = (char *)calloc(imageR_->image_size, sizeof(char));
-        memset(imageR_->image, 0, imageR_->image_size * sizeof(char));
-    }
+    imageR_->bytes_per_pixel = image_->bytes_per_pixel;
+    imageR_->image_size = imageR_->width * imageR_->height * imageR_->bytes_per_pixel;
+    imageR_->is_new = 0;
+    imageR_->image = (char *)calloc(imageR_->image_size, sizeof(char));
+    memset(imageR_->image, 0, imageR_->image_size * sizeof(char));
+
+    //ROS_INFO("x1:%d,x2:%d,y1:%d,y2:%d,xs:%d,ys:%d,w1:%d,h1:%d,w2:%d,h2:%d", x1_,x2_,y1_,y2_,xS_,yS_,imageL_->width,imageL_->height, imageR_->width, imageR_->height);
 }
                       
 void UsbCam::partition_image(const int& x1, const int& y1, camera_image_t *dest)

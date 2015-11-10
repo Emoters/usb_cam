@@ -61,14 +61,16 @@ public:
   
   // stereo image checking
   int x1_, x2_, y1_, y2_;
+  ros::NodeHandle nodeR_, nodeL_;               //because we have to trick 'camera_info' service
   image_transport::CameraPublisher image_pubR_;
   sensor_msgs::Image imgR_;
+  boost::shared_ptr<camera_info_manager::CameraInfoManager> cinfoR_;
   bool stereo_;
 
   UsbCam cam_;
 
   UsbCamNode() :
-      node_("~")
+      node_("~"), nodeL_("~/left"), nodeR_("~/right")
   {
     // grab the parameters
     node_.param("video_device", video_device_name_, std::string("/dev/video0"));
@@ -94,38 +96,73 @@ public:
     node_.param("auto_white_balance", auto_white_balance_, true);
     node_.param("white_balance", white_balance_, 4000);
     // discover the partition for a stereo image report
-    node_.param("saturation", x1_, -1); //-1 "none"
-    node_.param("saturation", x2_, -1); //-1 "none"
-    node_.param("saturation", y1_, -1); //-1 "none"
-    node_.param("saturation", y2_, -1); //-1 "none"
+    node_.param("x1", x1_, -1); //-1 "none"
+    node_.param("x2", x2_, -1); //-1 "none"
+    node_.param("y1", y1_, -1); //-1 "none"
+    node_.param("y2", y2_, -1); //-1 "none"
     stereo_ = (x1_!=-1 && x2_!=-1 && y1_!=-1 && y2_!=-1);
-      
-    // load the camera info
-    node_.param("camera_frame_id", img_.header.frame_id, std::string("head_camera"));
-    node_.param("camera_name", camera_name_, std::string("head_camera"));
-    node_.param("camera_info_url", camera_info_url_, std::string(""));
-    cinfo_.reset(new camera_info_manager::CameraInfoManager(node_, camera_name_, camera_info_url_));
-    // check for default camera info
-    if (!cinfo_->isCalibrated())
-    {
-      cinfo_->setCameraName(video_device_name_);
-      sensor_msgs::CameraInfo camera_info;
-      camera_info.header.frame_id = img_.header.frame_id;
-      camera_info.width = image_width_;
-      camera_info.height = image_height_;
-      cinfo_->setCameraInfo(camera_info);
-    }
 
+    // get parameters for image partition
+    if (stereo_) {
+        // load the camera info (left/generic)
+        node_.param("camera_name_left", camera_name_, std::string("head_camera_left"));
+        node_.param("camera_frame_id_left", img_.header.frame_id, std::string("head_camera_left"));
+        node_.param("camera_info_url_left", camera_info_url_, std::string(""));
+        cinfo_.reset(new camera_info_manager::CameraInfoManager(nodeL_, camera_name_, camera_info_url_));
+        // check for default camera info
+        if (!cinfo_->isCalibrated())
+        {
+            cinfo_->setCameraName(video_device_name_);
+            sensor_msgs::CameraInfo camera_info;
+            camera_info.header.frame_id = img_.header.frame_id;
+            camera_info.width = image_width_;
+            camera_info.height = image_height_;
+            cinfo_->setCameraInfo(camera_info);
+        }
+
+        // load the camera info
+        node_.param("camera_name_right", camera_name_, std::string("head_camera_right"));
+        node_.param("camera_frame_id_right", imgR_.header.frame_id, std::string("head_camera_right"));
+        node_.param("camera_info_url_right", camera_info_url_, std::string(""));
+        cinfoR_.reset(new camera_info_manager::CameraInfoManager(nodeR_, camera_name_, camera_info_url_));
+        // check for default camera info
+        if (!cinfoR_->isCalibrated())
+        {
+            cinfoR_->setCameraName(video_device_name_+"_fake");
+            sensor_msgs::CameraInfo camera_info;
+            camera_info.header.frame_id = img_.header.frame_id;
+            camera_info.width = image_width_;
+            camera_info.height = image_height_;
+            cinfoR_->setCameraInfo(camera_info);
+        }
+    }
+    else {
+        // load the camera info
+        node_.param("camera_frame_id", img_.header.frame_id, std::string("head_camera"));
+        node_.param("camera_name", camera_name_, std::string("head_camera"));
+        node_.param("camera_info_url", camera_info_url_, std::string(""));
+        cinfo_.reset(new camera_info_manager::CameraInfoManager(node_, camera_name_, camera_info_url_));
+        // check for default camera info
+        if (!cinfo_->isCalibrated())
+        {
+            cinfo_->setCameraName(video_device_name_);
+            sensor_msgs::CameraInfo camera_info;
+            camera_info.header.frame_id = img_.header.frame_id;
+            camera_info.width = image_width_;
+            camera_info.height = image_height_;
+            cinfo_->setCameraInfo(camera_info);
+        }
+    }
 
     ROS_INFO("Starting '%s' (%s) at %dx%d via %s (%s) at %i FPS", camera_name_.c_str(), video_device_name_.c_str(),
         image_width_, image_height_, io_method_name_.c_str(), pixel_format_name_.c_str(), framerate_);
-
+      
     // set the IO method
     UsbCam::io_method io_method = UsbCam::io_method_from_string(io_method_name_);
     if(io_method == UsbCam::IO_METHOD_UNKNOWN)
     {
       ROS_FATAL("Unknown IO method '%s'", io_method_name_.c_str());
-      node_.shutdown();
+      shutdown();
       return;
     }
 
@@ -134,24 +171,25 @@ public:
     if (pixel_format == UsbCam::PIXEL_FORMAT_UNKNOWN)
     {
       ROS_FATAL("Unknown pixel format '%s'", pixel_format_name_.c_str());
-      node_.shutdown();
+      shutdown();
       return;
     }
 
-    // get parameters for image partition
     if (stereo_) {
         // advertise both image topics
-        image_transport::ImageTransport itL(node_), itR(node_);
-        image_pub_ = itL.advertiseCamera("left/image_raw", 1);
-        image_pubR_ = itR.advertiseCamera("right/image_raw", 1);
+        ROS_INFO("Initializing stereo mode: [%02d,%02d x %02d,%02d", x1_, y1_, x2_, y2_);
+        image_transport::ImageTransport itL(nodeL_), itR(nodeR_);
+        image_pub_ = itL.advertiseCamera("image_raw", 1);
+        image_pubR_ = itR.advertiseCamera("image_raw", 1);
         cam_.set_partition(x1_, y1_, x2_, y2_);
     }
-    else {
+    else
+    {
         // advertise the main image topic
         image_transport::ImageTransport it(node_);
         image_pub_ = it.advertiseCamera("image_raw", 1);
     }
-      
+
     // start the camera
     cam_.start(video_device_name_.c_str(), io_method, pixel_format, image_width_,
 		     image_height_, framerate_);
@@ -216,11 +254,25 @@ public:
         cam_.set_v4l_parameter("focus_absolute", focus_);
       }
     }
+      
+      
   }
 
   virtual ~UsbCamNode()
   {
     cam_.shutdown();
+  }
+    
+  void shutdown(void)
+  {
+      if (stereo_) {
+          nodeR_.shutdown();
+          nodeL_.shutdown();
+      }
+      else {
+          node_.shutdown();
+      }
+      cam_.shutdown();
   }
 
   bool take_and_send_image()
@@ -242,14 +294,19 @@ public:
         cam_.grab_image_stereo(&img_, &imgR_);
         
         // grab the camera info
-        sensor_msgs::CameraInfoPtr ci(new sensor_msgs::CameraInfo(cinfo_->getCameraInfo()));
-        ci->header.frame_id = img_.header.frame_id;
-        ci->header.stamp = img_.header.stamp;
-        
+        sensor_msgs::CameraInfoPtr ciL(new sensor_msgs::CameraInfo(cinfo_->getCameraInfo()));
+        ciL->header.frame_id = img_.header.frame_id;
+        ciL->header.stamp = img_.header.stamp;
         // publish the image
-        image_pub_.publish(img_, *ci);
+        image_pub_.publish(img_, *ciL);
+
+        // grab the camera info
+        sensor_msgs::CameraInfoPtr ciR(new sensor_msgs::CameraInfo(cinfo_->getCameraInfo()));
+        ciR->header.frame_id = imgR_.header.frame_id;
+        ciR->header.stamp = imgR_.header.stamp;
+        
         // publish the image; for now copy calibration info for right channel
-        image_pubR_.publish(imgR_, *ci);
+        image_pubR_.publish(imgR_, *ciR);
     }
     return true;
   }
