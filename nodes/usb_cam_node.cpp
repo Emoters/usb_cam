@@ -62,15 +62,16 @@ public:
   // stereo image checking
   int x1_, x2_, y1_, y2_;
   ros::NodeHandle nodeR_, nodeL_;               //because we have to trick 'camera_info' service
+  std::string camera_nameR_, camera_info_urlR_;
   image_transport::CameraPublisher image_pubR_;
   sensor_msgs::Image imgR_;
   boost::shared_ptr<camera_info_manager::CameraInfoManager> cinfoR_;
   bool stereo_;
-
+    
   UsbCam cam_;
 
   UsbCamNode() :
-      node_("~"), nodeL_("~/left"), nodeR_("~/right")
+      node_("~"), nodeR_("~/right"), nodeL_("~/left")
   {
     // grab the parameters
     node_.param("video_device", video_device_name_, std::string("/dev/video0"));
@@ -119,12 +120,11 @@ public:
             camera_info.height = image_height_;
             cinfo_->setCameraInfo(camera_info);
         }
-
         // load the camera info
-        node_.param("camera_name_right", camera_name_, std::string("head_camera_right"));
+        node_.param("camera_name_right", camera_nameR_, std::string("head_camera_right"));
         node_.param("camera_frame_id_right", imgR_.header.frame_id, std::string("head_camera_right"));
-        node_.param("camera_info_url_right", camera_info_url_, std::string(""));
-        cinfoR_.reset(new camera_info_manager::CameraInfoManager(nodeR_, camera_name_, camera_info_url_));
+        node_.param("camera_info_url_right", camera_info_urlR_, std::string(""));
+        cinfoR_.reset(new camera_info_manager::CameraInfoManager(nodeR_, camera_nameR_, camera_info_urlR_));
         // check for default camera info
         if (!cinfoR_->isCalibrated())
         {
